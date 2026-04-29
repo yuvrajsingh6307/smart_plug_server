@@ -78,6 +78,16 @@ def init_db():
                 sent_at      TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schedules (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                action       TEXT NOT NULL,
+                trigger_at   TEXT NOT NULL,
+                label        TEXT,
+                is_done      INTEGER DEFAULT 0,
+                triggered_at TEXT
+            )
+        """)
         # Default settings
         defaults = [
             ("alert_email", ""),
@@ -283,20 +293,32 @@ def aio_get_history(feed_key, limit=20):
 
 def run_scheduler():
     while True:
-        now = datetime.now()
-        with schedule_lock:
-            for sched in schedules:
-                if sched.get("done"):
-                    continue
-                # Check if it's time to trigger
-                trigger_time = sched.get("trigger_time")
-                if trigger_time and now >= trigger_time:
-                    action = sched.get("action", "ON")
+        try:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                # Find pending schedules whose trigger time has passed
+                pending = conn.execute(
+                    "SELECT * FROM schedules WHERE is_done = 0 AND trigger_at <= ?",
+                    (now_str,)
+                ).fetchall()
+
+                for sched in pending:
+                    action = sched["action"]
                     val = "1" if action == "ON" else "0"
-                    aio_publish(FEEDS["relay"], val)
-                    sched["done"] = True
-                    sched["triggered_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
-        time.sleep(5)
+                    
+                    print(f"[SCHEDULER] Triggering {action} for ID {sched['id']}")
+                    result = aio_publish(FEEDS["relay"], val)
+                    
+                    if result.get("success"):
+                        conn.execute(
+                            "UPDATE schedules SET is_done = 1, triggered_at = ? WHERE id = ?",
+                            (now_str, sched["id"])
+                        )
+            
+        except Exception as e:
+            print("Scheduler thread error:", e)
+        time.sleep(10)
 
 
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
@@ -409,16 +431,18 @@ def api_history(feed_key):
 # --- Schedule list ---
 @app.route("/api/schedules", methods=["GET"])
 def api_schedules_get():
-    with schedule_lock:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM schedules ORDER BY is_done ASC, trigger_at ASC").fetchall()
         out = []
-        for s in schedules:
+        for r in rows:
             out.append({
-                "id": s["id"],
-                "action": s["action"],
-                "trigger_time": s["trigger_time"].strftime("%Y-%m-%d %H:%M:%S") if s.get("trigger_time") else None,
-                "label": s.get("label", ""),
-                "done": s.get("done", False),
-                "triggered_at": s.get("triggered_at"),
+                "id": r["id"],
+                "action": r["action"],
+                "trigger_time": r["trigger_at"],
+                "label": r["label"] or "",
+                "done": bool(r["is_done"]),
+                "triggered_at": r["triggered_at"],
             })
     return jsonify(out)
 
@@ -429,44 +453,41 @@ def api_schedules_post():
     data = request.get_json()
     action = data.get("action", "ON")
     label = data.get("label", "")
-    trigger_str = data.get("trigger_time")  # "YYYY-MM-DD HH:MM"
+    trigger_str = data.get("trigger_time")  # "YYYY-MM-DDTHH:MM"
 
     if action not in ("ON", "OFF"):
         return jsonify({"success": False, "error": "action must be ON or OFF"}), 400
     try:
-        trigger_time = datetime.strptime(trigger_str, "%Y-%m-%dT%H:%M")
+        # Check format
+        datetime.strptime(trigger_str, "%Y-%m-%dT%H:%M")
     except Exception:
         return jsonify({"success": False, "error": "trigger_time format: YYYY-MM-DDTHH:MM"}), 400
 
-    with schedule_lock:
-        new_id = len(schedules) + 1
-        schedules.append({
-            "id": new_id,
-            "action": action,
-            "trigger_time": trigger_time,
-            "label": label,
-            "done": False,
-            "triggered_at": None,
-        })
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO schedules (action, trigger_at, label) VALUES (?, ?, ?)",
+            (action, trigger_str.replace("T", " ") + ":00", label)
+        )
+        conn.commit()
 
-    return jsonify({"success": True, "id": new_id})
+    return jsonify({"success": True})
 
 
 # --- Delete Schedule ---
 @app.route("/api/schedules/<int:sched_id>", methods=["DELETE"])
 def api_schedules_delete(sched_id):
-    with schedule_lock:
-        global schedules
-        schedules = [s for s in schedules if s["id"] != sched_id]
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM schedules WHERE id = ?", (sched_id,))
+        conn.commit()
     return jsonify({"success": True})
 
 
 # --- Clear done schedules ---
 @app.route("/api/schedules/clear-done", methods=["POST"])
 def api_schedules_clear_done():
-    with schedule_lock:
-        global schedules
-        schedules = [s for s in schedules if not s.get("done")]
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM schedules WHERE is_done = 1")
+        conn.commit()
     return jsonify({"success": True})
 
 
