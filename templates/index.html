@@ -142,6 +142,65 @@
       <canvas id="historyChart" height="90"></canvas>
     </section>
 
+    <!-- Alert Settings -->
+    <section class="panel settings-panel">
+      <div class="settings-header">
+        <h2>🔔 Alert Settings</h2>
+        <div class="toggle-wrap">
+          <span class="muted-text">Enable Email Alerts</span>
+          <label class="toggle-switch sm">
+            <input type="checkbox" id="alertsEnabled"/>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="settings-grid">
+        <div class="settings-group">
+          <label>Recipient Email</label>
+          <input type="email" id="alertEmail" placeholder="your@email.com" class="input-field"/>
+        </div>
+        <div class="settings-group">
+          <label>Power Threshold (W)</label>
+          <input type="number" id="powerThresh" placeholder="500" class="input-field"/>
+        </div>
+        <div class="settings-group">
+          <label>Cost Threshold (₹)</label>
+          <input type="number" id="costThresh" placeholder="100" class="input-field"/>
+        </div>
+      </div>
+
+      <div class="smtp-config-wrap">
+        <button class="btn btn-sm btn-muted" type="button" onclick="toggleSmtpConfig()">⚙️ Advanced SMTP Config</button>
+        <div id="smtpConfig" style="display:none; margin-top:15px; border-top:1px solid var(--border); padding-top:15px;">
+          <div class="settings-grid">
+             <div class="settings-group">
+               <label>SMTP Host</label>
+               <input type="text" id="smtpHost" placeholder="smtp.gmail.com" class="input-field"/>
+             </div>
+             <div class="settings-group">
+               <label>SMTP Port</label>
+               <input type="text" id="smtpPort" placeholder="465" class="input-field"/>
+             </div>
+             <div class="settings-group">
+               <label>SMTP User (Gmail Address)</label>
+               <input type="text" id="smtpUser" placeholder="your@gmail.com" class="input-field"/>
+             </div>
+             <div class="settings-group">
+               <label>App Password</label>
+               <input type="password" id="smtpPass" placeholder="••••••••••••" class="input-field"/>
+             </div>
+          </div>
+          <p class="muted-text" style="font-size:0.75rem; margin-top:8px;">Note: For Gmail, use an "App Password". <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--accent2)">Learn how</a></p>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <button class="btn btn-schedule" onclick="saveAlertSettings()">💾 Save Settings</button>
+        <button class="btn btn-reset" style="width:auto" onclick="testEmail()">📧 Test Email</button>
+      </div>
+    </section>
+
     <!-- Cost History Table -->
     <section class="panel cost-history-panel">
       <div class="cost-history-header">

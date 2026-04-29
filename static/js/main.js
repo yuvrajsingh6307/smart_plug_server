@@ -49,16 +49,19 @@ async function fetchDashboard() {
     const badge = document.getElementById('statusBadge');
     const dot   = badge.querySelector('.pulse-dot');
     const txt   = document.getElementById('statusText');
+    
     if (status === 'ON') {
       dot.className = 'pulse-dot';
       txt.textContent = 'ON – Active';
       badge.style.borderColor = 'rgba(34,197,94,0.4)';
-      updateToggle(true);
+      // Only update toggle from status if we aren't in the middle of a manual change
+      if (!isRelayUserInteracting()) updateToggle(true);
     } else if (status === 'OFF') {
       dot.className = 'pulse-dot off';
       txt.textContent = 'OFF – Idle';
       badge.style.borderColor = 'rgba(239,68,68,0.4)';
-      updateToggle(false);
+      // Only update toggle from status if we aren't in the middle of a manual change
+      if (!isRelayUserInteracting()) updateToggle(false);
     } else {
       txt.textContent = 'Unknown';
     }
@@ -101,14 +104,28 @@ function updateToggle(isOn) {
   label.style.color = isOn ? 'var(--green)' : 'var(--red)';
 }
 
+// ---- Relay Manual Override logic ----
+let relayOverrideTimer = null;
+function isRelayUserInteracting() {
+  return relayOverrideTimer !== null;
+}
+function startRelayOverride() {
+  if (relayOverrideTimer) clearTimeout(relayOverrideTimer);
+  relayOverrideTimer = setTimeout(() => {
+    relayOverrideTimer = null;
+  }, 10000); // 10 second window to allow Adafruit/ESP32 to sync
+}
+
 // ---- Relay ----
 async function setRelay(state) {
+  startRelayOverride(); // Ignore polling updates for 10s
   const res = await apiPost('/api/relay', { state });
   if (res.success) {
-    showToast(`Relay turned ${state}`, 'ok');
+    showToast(`Relay command: ${state}`, 'ok');
     updateToggle(state === 'ON');
   } else {
     showToast('Failed: ' + (res.error || '?'), 'err');
+    relayOverrideTimer = null; // Clear override if command failed
   }
 }
 
@@ -328,11 +345,63 @@ async function clearCostHistory() {
   }
 }
 
+// ---- Alert Settings ----
+function toggleSmtpConfig() {
+  const cfg = document.getElementById('smtpConfig');
+  cfg.style.display = cfg.style.display === 'none' ? 'block' : 'none';
+}
+
+async function fetchAlertSettings() {
+  try {
+    const data = await (await fetch('/api/settings')).json();
+    document.getElementById('alertsEnabled').checked = data.alerts_enabled === "1";
+    document.getElementById('alertEmail').value = data.alert_email || '';
+    document.getElementById('powerThresh').value = data.power_threshold || '';
+    document.getElementById('costThresh').value = data.cost_threshold || '';
+    document.getElementById('smtpHost').value = data.smtp_host || '';
+    document.getElementById('smtpPort').value = data.smtp_port || '';
+    document.getElementById('smtpUser').value = data.smtp_user || '';
+    // smtpPass is never returned for security
+  } catch (e) { console.error('Settings load error', e); }
+}
+
+async function saveAlertSettings() {
+  const body = {
+    alerts_enabled: document.getElementById('alertsEnabled').checked ? "1" : "0",
+    alert_email: document.getElementById('alertEmail').value,
+    power_threshold: document.getElementById('powerThresh').value,
+    cost_threshold: document.getElementById('costThresh').value,
+    smtp_host: document.getElementById('smtpHost').value,
+    smtp_port: document.getElementById('smtpPort').value,
+    smtp_user: document.getElementById('smtpUser').value,
+    smtp_pass: document.getElementById('smtpPass').value
+  };
+  const res = await apiPost('/api/settings', body);
+  if (res.success) {
+    showToast('Settings saved ✓', 'ok');
+    document.getElementById('smtpPass').value = ''; // clear password field
+  } else {
+    showToast('Failed to save settings', 'err');
+  }
+}
+
+async function testEmail() {
+  showToast('Sending test email...', 'ok');
+  const res = await apiPost('/api/test-email', {});
+  if (res.success) {
+    showToast('Test email sent! Check your inbox.', 'ok');
+  } else {
+    showToast('Test failed. Check SMTP config or app logs.', 'err');
+  }
+}
+
 // ---- Init ----
 fetchDashboard();
 fetchSchedules();
 fetchCostHistory();
+fetchAlertSettings();
 loadHistory('voltage', document.querySelector('.tab-btn.active'));
+
 
 setInterval(fetchDashboard, POLL_INTERVAL);
 setInterval(fetchSchedules, 30000);

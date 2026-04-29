@@ -7,13 +7,24 @@ import sqlite3
 import csv
 import io
 import os
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 
 # -------- Adafruit IO Config --------
-AIO_USERNAME = "yuvrajsingh01"
-AIO_KEY = "aio_HrHe51WPGBO189y6s6J8zpk52XSG"
+AIO_USERNAME = os.getenv("AIO_USERNAME")
+AIO_KEY = os.getenv("AIO_KEY")
 AIO_BASE_URL = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds"
+
+if not AIO_USERNAME or not AIO_KEY:
+    print("CRITICAL ERROR: AIO_USERNAME or AIO_KEY not set in environment variables.")
 
 HEADERS = {
     "X-AIO-Key": AIO_KEY,
@@ -41,7 +52,7 @@ schedule_lock = threading.Lock()
 DB_PATH = os.path.join(os.path.dirname(__file__), "cost_history.db")
 
 def init_db():
-    """Create the cost_history table if it doesn't exist."""
+    """Create the cost_history and settings tables."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cost_history (
@@ -51,59 +62,107 @@ def init_db():
                 recorded_at TEXT  NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        # Default settings
+        defaults = [
+            ("alert_email", ""),
+            ("smtp_host", "smtp.gmail.com"),
+            ("smtp_port", "465"),
+            ("smtp_user", ""),
+            ("smtp_pass", ""),
+            ("power_threshold", "500"),
+            ("cost_threshold", "100"),
+            ("alerts_enabled", "0")
+        ]
+        for k, v in defaults:
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
         conn.commit()
 
 init_db()
 
-def save_cost(cost_val, energy_val=None):
-    """Insert a cost reading into the local DB."""
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                "INSERT INTO cost_history (cost, energy, recorded_at) VALUES (?, ?, ?)",
-                (float(cost_val), float(energy_val) if energy_val is not None else None,
-                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            )
-            conn.commit()
-    except Exception as e:
-        print("DB save error:", e)
-
-def get_cost_history(limit=100, offset=0):
-    """Fetch cost history rows from the DB."""
+def get_setting(key, default=""):
     with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM cost_history ORDER BY id DESC LIMIT ? OFFSET ?",
-            (limit, offset)
-        ).fetchall()
-    return [dict(r) for r in rows]
+        res = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return res[0] if res else default
 
-def clear_cost_history():
+def save_setting(key, value):
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("DELETE FROM cost_history")
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
         conn.commit()
 
-# -------- Cost Poller Background Thread --------
-COST_POLL_INTERVAL = 60  # seconds
-_last_saved_cost = None
+# -------- Email Helper --------
+def send_email_alert(subject, body):
+    enabled = get_setting("alerts_enabled")
+    recipient = get_setting("alert_email")
+    user = get_setting("smtp_user")
+    pw = get_setting("smtp_pass")
+    host = get_setting("smtp_host")
+    port = int(get_setting("smtp_port"))
 
-def run_cost_poller():
-    """Poll Adafruit IO for cost + energy and persist locally."""
-    global _last_saved_cost
+    if enabled != "1" or not recipient or not user or not pw:
+        return False
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = user
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
+            server.login(user, pw)
+            server.sendmail(user, recipient, msg.as_string())
+        return True
+    except Exception as e:
+        print("Email error:", e)
+        return False
+
+# -------- Alert Monitor --------
+_last_power_alert_time = 0
+_last_cost_alert_time = 0
+ALERT_COOLDOWN = 3600 # 1 hour between emails per type
+
+def run_alert_monitor():
+    global _last_power_alert_time, _last_cost_alert_time, _last_saved_cost
     while True:
         try:
-            cost_data   = aio_get(FEEDS["cost"])
-            energy_data = aio_get(FEEDS["energy"])
-            cost_val    = cost_data.get("value")
-            energy_val  = energy_data.get("value")
-            if cost_val is not None:
-                # Only save when the value actually changes
-                if str(cost_val) != str(_last_saved_cost):
-                    save_cost(cost_val, energy_val)
-                    _last_saved_cost = cost_val
+            # Check Power
+            p_data = aio_get(FEEDS["power"])
+            if p_data.get("value"):
+                p_val = float(p_data["value"])
+                p_thresh = float(get_setting("power_threshold", 500))
+                if p_val > p_thresh and (time.time() - _last_power_alert_time) > ALERT_COOLDOWN:
+                    send_email_alert("⚠️ High Power Usage Alert", 
+                        f"Your smart plug detected high power usage: {p_val}W (Limit: {p_thresh}W)")
+                    _last_power_alert_time = time.time()
+
+            # Check Cost & Persist Cost
+            c_data = aio_get(FEEDS["cost"])
+            e_data = aio_get(FEEDS["energy"])
+            if c_data.get("value"):
+                c_val = float(c_data["value"])
+                c_thresh = float(get_setting("cost_threshold", 100))
+                
+                # Persistent save
+                if str(c_val) != str(_last_saved_cost):
+                    save_cost(c_val, e_data.get("value"))
+                    _last_saved_cost = c_val
+
+                # Alert
+                if c_val > c_thresh and (time.time() - _last_cost_alert_time) > ALERT_COOLDOWN:
+                    send_email_alert("💰 High Energy Cost Alert", 
+                        f"Your smart plug accumulated cost has exceeded the limit: ₹{c_val} (Limit: ₹{c_thresh})")
+                    _last_cost_alert_time = time.time()
+
         except Exception as e:
-            print("Cost poller error:", e)
-        time.sleep(COST_POLL_INTERVAL)
+            print("Monitor error:", e)
+        time.sleep(60)
 
 # -------- Adafruit IO Helpers --------
 
@@ -172,7 +231,7 @@ def run_scheduler():
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 
-cost_poller_thread = threading.Thread(target=run_cost_poller, daemon=True)
+cost_poller_thread = threading.Thread(target=run_alert_monitor, daemon=True)
 cost_poller_thread.start()
 
 
@@ -187,7 +246,8 @@ def index():
 @app.route("/api/dashboard")
 def api_dashboard():
     result = {}
-    sensor_feeds = ["voltage", "current", "power", "energy", "status", "alerts", "cost"]
+    # Fetching relay command feed + sensor feeds
+    sensor_feeds = ["voltage", "current", "power", "energy", "status", "alerts", "cost", "relay"]
     for feed in sensor_feeds:
         result[feed] = aio_get(FEEDS[feed])
     return jsonify(result)
@@ -339,7 +399,29 @@ def api_schedules_clear_done():
     return jsonify({"success": True})
 
 
-# -------- Cost History Routes --------
+# -------- Alert Settings Routes --------
+
+@app.route("/api/settings", methods=["GET"])
+def api_get_settings():
+    keys = ["alert_email", "smtp_host", "smtp_port", "smtp_user", "power_threshold", "cost_threshold", "alerts_enabled"]
+    return jsonify({k: get_setting(k) for k in keys})
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_save_settings():
+    data = request.get_json()
+    for k, v in data.items():
+        # Don't overwrite password if it's empty in the request (unless user wants to clear it)
+        if k == "smtp_pass" and not v:
+            continue
+        save_setting(k, v)
+    return jsonify({"success": True})
+
+
+@app.route("/api/test-email", methods=["POST"])
+def api_test_email():
+    success = send_email_alert("🔌 Smart Plug Test", "This is a test email from your Smart Plug Dashboard.")
+    return jsonify({"success": success})
 
 @app.route("/api/cost-history")
 def api_cost_history():

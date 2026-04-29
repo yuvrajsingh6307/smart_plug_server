@@ -275,6 +275,21 @@ footer {
   padding: 24px; border-top: 1px solid var(--border);
 }
 
+/* ---- Alert Settings ---- */
+.settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.toggle-wrap { display: flex; align-items: center; gap: 10px; }
+.toggle-switch.sm { width: 48px; height: 26px; }
+.toggle-switch.sm .slider::before { height: 18px; width: 18px; left: 4px; bottom: 4px; }
+.toggle-switch.sm input:checked + .slider::before { transform: translateX(22px); }
+
+.settings-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 15px; margin-bottom: 20px;
+}
+.settings-group { display: flex; flex-direction: column; gap: 6px; }
+.settings-group label { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.settings-footer { display: flex; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+
 /* ---- Cost History ---- */
 .cost-history-panel { }
 .cost-history-header {
