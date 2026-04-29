@@ -306,6 +306,7 @@ def run_scheduler():
                 for sched in pending:
                     action = sched["action"]
                     val = "1" if action == "ON" else "0"
+                    print(sched)
                     
                     print(f"[SCHEDULER] Triggering {action} for ID {sched['id']}")
                     result = aio_publish(FEEDS["relay"], val)
