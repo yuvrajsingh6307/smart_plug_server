@@ -290,6 +290,11 @@ footer {
 .settings-group label { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
 .settings-footer { display: flex; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
 
+/* ---- Mail Logs ---- */
+.status-success { color: var(--green); font-weight: 700; font-size: 0.7rem; }
+.status-failed { color: var(--red); font-weight: 700; font-size: 0.7rem; }
+.error-text { color: var(--red); font-size: 0.75rem; font-style: italic; opacity: 0.8; }
+
 /* ---- Cost History ---- */
 .cost-history-panel { }
 .cost-history-header {

@@ -68,6 +68,16 @@ def init_db():
                 value TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mail_logs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject      TEXT NOT NULL,
+                recipient    TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                error_msg    TEXT,
+                sent_at      TEXT NOT NULL
+            )
+        """)
         # Default settings
         defaults = [
             ("alert_email", ""),
@@ -95,35 +105,93 @@ def save_setting(key, value):
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
         conn.commit()
 
+# -------- DB Helpers: Cost History --------
+
+def save_cost(cost_val, energy_val=None):
+    """Insert a cost reading into the local DB."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO cost_history (cost, energy, recorded_at) VALUES (?, ?, ?)",
+                (float(cost_val), float(energy_val) if energy_val is not None else None,
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            conn.commit()
+    except Exception as e:
+        print("DB save error:", e)
+
+def get_cost_history(limit=100, offset=0):
+    """Fetch cost history rows from the DB."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM cost_history ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+def clear_cost_history():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM cost_history")
+        conn.commit()
+
 # -------- Email Helper --------
-def send_email_alert(subject, body):
+def send_email_alert(subject, body, force=False):
+    """Sends an email alert. Use force=True to bypass the 'enabled' check (for testing)."""
     enabled = get_setting("alerts_enabled")
-    recipient = get_setting("alert_email")
-    user = get_setting("smtp_user")
-    pw = get_setting("smtp_pass")
+    recipient = get_setting("alert_email") or "triplem656@gmail.com"
+    user = os.getenv("EMAIL")
+    pw = os.getenv("PASSWORD")
     host = get_setting("smtp_host")
     port = int(get_setting("smtp_port"))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if enabled != "1" or not recipient or not user or not pw:
-        return False
+    # If not forced, check if alerts are globally enabled and credentials exist
+    if not force:
+        if enabled != "1" or not recipient or not user or not pw:
+            return False
+    else:
+        # For tests, just ensure we have credentials
+        if not user or not pw:
+            print("ERROR: SMTP credentials missing in .env")
+            return False
 
+    status = "SUCCESS"
+    err = None
     try:
         msg = MIMEMultipart()
         msg['From'] = user
         msg['To'] = recipient
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-
+        # print(msg)
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL(host, port, context=context) as server:
+            # print(server)
             server.login(user, pw)
             server.sendmail(user, recipient, msg.as_string())
-        return True
+            print('mail sent successfully')
     except Exception as e:
+        print(e)
+        status = "FAILED"
+        err = str(e)
         print("Email error:", e)
-        return False
+
+    # Log to DB
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO mail_logs (subject, recipient, status, error_msg, sent_at) VALUES (?, ?, ?, ?, ?)",
+                (subject, recipient, status, err, now)
+            )
+            conn.commit()
+    except Exception as db_e:
+        print("Mail log DB error:", db_e)
+
+    return status == "SUCCESS"
 
 # -------- Alert Monitor --------
+_last_saved_cost = None
 _last_power_alert_time = 0
 _last_cost_alert_time = 0
 ALERT_COOLDOWN = 3600 # 1 hour between emails per type
@@ -169,10 +237,13 @@ def run_alert_monitor():
 def aio_get(feed_key):
     """Get the latest value from an Adafruit IO feed."""
     try:
+        print('getting values')
         url = f"{AIO_BASE_URL}/{feed_key}/data/last"
         r = requests.get(url, headers=HEADERS, timeout=6)
+        # print(r.status_code)
         if r.status_code == 200:
             data = r.json()
+            # print(data)
             return {
                 "value": data.get("value"),
                 "created_at": data.get("created_at"),
@@ -420,8 +491,29 @@ def api_save_settings():
 
 @app.route("/api/test-email", methods=["POST"])
 def api_test_email():
-    success = send_email_alert("🔌 Smart Plug Test", "This is a test email from your Smart Plug Dashboard.")
+    data = request.get_json() or {}
+    subject = data.get("subject", "🔌 Smart Plug Test")
+    body = data.get("body", "This is a test email from your Smart Plug Dashboard.")
+    # Use force=True so tests work even if alerts are disabled
+    success = send_email_alert(subject, body, force=True)
     return jsonify({"success": success})
+
+
+@app.route("/api/mail-logs")
+def api_mail_logs():
+    """Return recent mail sending logs."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM mail_logs ORDER BY id DESC LIMIT 50").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/mail-logs", methods=["DELETE"])
+def api_clear_mail_logs():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM mail_logs")
+        conn.commit()
+    return jsonify({"success": True})
 
 @app.route("/api/cost-history")
 def api_cost_history():

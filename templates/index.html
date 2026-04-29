@@ -201,6 +201,51 @@
       </div>
     </section>
 
+    <!-- Mail Tester -->
+    <section class="panel mail-tester-panel">
+      <h2>✉️ Mail Tester</h2>
+      <p class="panel-sub">Send a custom test email to verify your SMTP configuration and alert appearance.</p>
+      
+      <div class="tester-form">
+        <div class="settings-grid">
+          <div class="settings-group" style="grid-column: 1 / -1;">
+            <label>Subject</label>
+            <input type="text" id="testSubject" placeholder="Alert Subject" value="Smart Plug Manual Test" class="input-field"/>
+          </div>
+          <div class="settings-group" style="grid-column: 1 / -1;">
+            <label>Message Body</label>
+            <textarea id="testBody" placeholder="Type your test message here..." class="input-field" style="min-height: 80px; resize: vertical; font-family: inherit;">This is a custom test message sent from the dashboard.</textarea>
+          </div>
+        </div>
+        <button class="btn btn-schedule" style="margin-top:10px" onclick="sendCustomTestEmail()">🚀 Send Custom Test Email</button>
+      </div>
+    </section>
+
+    <!-- Mail Logs Section -->
+    <section class="panel mail-logs-panel">
+      <div class="settings-header">
+        <h2>📜 Mail Activity Logs</h2>
+        <button class="btn btn-sm btn-muted" onclick="clearMailLogs()">🗑 Clear Logs</button>
+      </div>
+      <p class="panel-sub">History of sent and failed email alerts</p>
+      
+      <div class="cost-table-wrap">
+        <table class="cost-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Time</th>
+              <th>Subject</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="mailLogsBody">
+            <tr><td colspan="4" class="empty-msg">No logs yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Cost History Table -->
     <section class="panel cost-history-panel">
       <div class="cost-history-header">

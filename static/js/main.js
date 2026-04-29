@@ -44,24 +44,36 @@ async function fetchDashboard() {
     setText('valEnergy',  data.energy?.value  ?? '--');
     setText('valCost',    data.cost?.value    ?? '--');
 
-    // Status badge
-    const status = (data.status?.value || '').toUpperCase();
+    // Update Toggle Switch based on 'relay' command feed (the desired state)
+    const relayCommand = (data.relay?.value || '0');
+    if (!isRelayUserInteracting()) {
+      updateToggle(relayCommand === '1' || relayCommand === 'ON');
+    }
+
+    // Update Status Badge based on 'status' sensor feed (the actual feedback)
+    const statusVal = (data.status?.value || '').toUpperCase();
+    const statusTime = data.status?.created_at ? new Date(data.status.created_at) : null;
+    const isStale = statusTime && (new Date() - statusTime > 120000); // Stale if older than 2 mins
+    
     const badge = document.getElementById('statusBadge');
     const dot   = badge.querySelector('.pulse-dot');
     const txt   = document.getElementById('statusText');
     
-    if (status === 'ON') {
+    if (isStale) {
+      dot.className = 'pulse-dot off';
+      txt.textContent = 'OFFLINE';
+      badge.style.borderColor = 'rgba(156,163,175,0.4)'; // Gray
+      dot.style.background = '#6b7280'; // Gray
+    } else if (statusVal === 'ON') {
       dot.className = 'pulse-dot';
       txt.textContent = 'ON – Active';
       badge.style.borderColor = 'rgba(34,197,94,0.4)';
-      // Only update toggle from status if we aren't in the middle of a manual change
-      if (!isRelayUserInteracting()) updateToggle(true);
-    } else if (status === 'OFF') {
+      dot.style.background = ''; // Use CSS default
+    } else if (statusVal === 'OFF') {
       dot.className = 'pulse-dot off';
       txt.textContent = 'OFF – Idle';
       badge.style.borderColor = 'rgba(239,68,68,0.4)';
-      // Only update toggle from status if we aren't in the middle of a manual change
-      if (!isRelayUserInteracting()) updateToggle(false);
+      dot.style.background = ''; // Use CSS default
     } else {
       txt.textContent = 'Unknown';
     }
@@ -391,8 +403,57 @@ async function testEmail() {
   if (res.success) {
     showToast('Test email sent! Check your inbox.', 'ok');
   } else {
-    showToast('Test failed. Check SMTP config or app logs.', 'err');
+    showToast('Test failed. Check SMTP config or logs.', 'err');
   }
+  fetchMailLogs(); // Refresh logs after test
+}
+
+async function sendCustomTestEmail() {
+  const subject = document.getElementById('testSubject').value;
+  const body = document.getElementById('testBody').value;
+  
+  if (!subject || !body) {
+    showToast('Subject and body are required', 'err');
+    return;
+  }
+
+  showToast('Sending custom test email...', 'ok');
+  const res = await apiPost('/api/test-email', { subject, body });
+  
+  if (res.success) {
+    showToast('Custom email sent! Check your inbox.', 'ok');
+  } else {
+    showToast('Failed to send email. Check logs.', 'err');
+  }
+  fetchMailLogs();
+}
+
+async function fetchMailLogs() {
+  const tbody = document.getElementById('mailLogsBody');
+  try {
+    const data = await (await fetch('/api/mail-logs')).json();
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">No mail activity recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(log => `
+      <tr>
+        <td><span class="${log.status === 'SUCCESS' ? 'status-success' : 'status-failed'}">${log.status}</span></td>
+        <td style="font-size:0.75rem; color:var(--muted)">${log.sent_at}</td>
+        <td style="font-size:0.8rem">${escHtml(log.subject)}</td>
+        <td>
+          <div style="font-size:0.75rem">${escHtml(log.recipient)}</div>
+          ${log.error_msg ? `<div class="error-text">${escHtml(log.error_msg)}</div>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) { console.error('Mail logs error', e); }
+}
+
+async function clearMailLogs() {
+  if (!confirm('Clear all mail activity logs?')) return;
+  await apiDelete('/api/mail-logs');
+  fetchMailLogs();
 }
 
 // ---- Init ----
@@ -400,7 +461,9 @@ fetchDashboard();
 fetchSchedules();
 fetchCostHistory();
 fetchAlertSettings();
+fetchMailLogs();
 loadHistory('voltage', document.querySelector('.tab-btn.active'));
+
 
 
 setInterval(fetchDashboard, POLL_INTERVAL);
