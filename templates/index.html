@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Plug Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <!-- Header -->
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span>Smart<b>Plug</b></span>
+      </div>
+      <div class="header-right">
+        <div class="status-badge" id="statusBadge">
+          <span class="pulse-dot"></span>
+          <span id="statusText">Loading…</span>
+        </div>
+        <div class="last-updated" id="lastUpdated">--</div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Alert Banner -->
+    <div class="alert-banner" id="alertBanner" style="display:none"></div>
+
+    <!-- Sensor Cards -->
+    <section class="cards-grid">
+      <div class="card" id="cardVoltage">
+        <div class="card-icon">🔌</div>
+        <div class="card-label">Voltage</div>
+        <div class="card-value" id="valVoltage">--</div>
+        <div class="card-unit">V</div>
+      </div>
+      <div class="card" id="cardCurrent">
+        <div class="card-icon">⚡</div>
+        <div class="card-label">Current</div>
+        <div class="card-value" id="valCurrent">--</div>
+        <div class="card-unit">A</div>
+      </div>
+      <div class="card" id="cardPower">
+        <div class="card-icon">💡</div>
+        <div class="card-label">Power</div>
+        <div class="card-value" id="valPower">--</div>
+        <div class="card-unit">W</div>
+      </div>
+      <div class="card" id="cardEnergy">
+        <div class="card-icon">🔋</div>
+        <div class="card-label">Energy</div>
+        <div class="card-value" id="valEnergy">--</div>
+        <div class="card-unit">kWh</div>
+      </div>
+      <div class="card" id="cardCost">
+        <div class="card-icon">💰</div>
+        <div class="card-label">Cost</div>
+        <div class="card-value" id="valCost">--</div>
+        <div class="card-unit">₹</div>
+      </div>
+    </section>
+
+    <!-- Control + Timer row -->
+    <section class="controls-row">
+
+      <!-- Relay Control -->
+      <div class="panel relay-panel">
+        <h2>Relay Control</h2>
+        <div class="relay-switch-wrap">
+          <label class="toggle-switch">
+            <input type="checkbox" id="relayToggle"/>
+            <span class="slider"></span>
+          </label>
+          <span class="toggle-label" id="toggleLabel">OFF</span>
+        </div>
+        <div class="relay-btns">
+          <button class="btn btn-on" id="btnOn" onclick="setRelay('ON')">Turn ON</button>
+          <button class="btn btn-off" id="btnOff" onclick="setRelay('OFF')">Turn OFF</button>
+        </div>
+        <button class="btn btn-reset" onclick="safetyReset()">🔄 Safety Reset</button>
+      </div>
+
+      <!-- Timer Control -->
+      <div class="panel timer-panel">
+        <h2>⏱ Timer</h2>
+        <p class="panel-sub">Auto turn OFF after set seconds</p>
+        <div class="timer-input-row">
+          <input type="number" id="timerSeconds" min="1" max="86400" placeholder="Seconds" class="input-field"/>
+          <button class="btn btn-timer" onclick="setTimer()">Set Timer</button>
+        </div>
+        <div class="timer-presets">
+          <button class="preset-btn" onclick="quickTimer(300)">5 min</button>
+          <button class="preset-btn" onclick="quickTimer(600)">10 min</button>
+          <button class="preset-btn" onclick="quickTimer(1800)">30 min</button>
+          <button class="preset-btn" onclick="quickTimer(3600)">1 hr</button>
+        </div>
+        <button class="btn btn-cancel-timer" onclick="cancelTimer()">✖ Cancel Timer</button>
+      </div>
+
+    </section>
+
+    <!-- Scheduler -->
+    <section class="panel scheduler-panel">
+      <h2>📅 Scheduler</h2>
+      <p class="panel-sub">Schedule relay ON / OFF at a specific date &amp; time</p>
+      <div class="scheduler-form">
+        <input type="text" id="schedLabel" placeholder="Label (optional)" class="input-field"/>
+        <input type="datetime-local" id="schedTime" class="input-field"/>
+        <select id="schedAction" class="input-field">
+          <option value="ON">Turn ON</option>
+          <option value="OFF">Turn OFF</option>
+        </select>
+        <button class="btn btn-schedule" onclick="addSchedule()">➕ Add Schedule</button>
+      </div>
+
+      <div class="schedule-list" id="scheduleList">
+        <div class="empty-msg">No schedules yet.</div>
+      </div>
+
+      <button class="btn btn-sm btn-muted" style="margin-top:12px" onclick="clearDoneSchedules()">🧹 Clear Done</button>
+    </section>
+
+    <!-- History Chart -->
+    <section class="panel chart-panel">
+      <div class="chart-header">
+        <h2>📈 History</h2>
+        <div class="chart-tabs">
+          <button class="tab-btn active" onclick="loadHistory('voltage',this)">Voltage</button>
+          <button class="tab-btn" onclick="loadHistory('current',this)">Current</button>
+          <button class="tab-btn" onclick="loadHistory('power',this)">Power</button>
+          <button class="tab-btn" onclick="loadHistory('energy',this)">Energy</button>
+          <button class="tab-btn" onclick="loadHistory('cost',this)">Cost</button>
+        </div>
+      </div>
+      <canvas id="historyChart" height="90"></canvas>
+    </section>
+
+    <!-- Cost History Table -->
+    <section class="panel cost-history-panel">
+      <div class="cost-history-header">
+        <div>
+          <h2>💰 Cost History</h2>
+          <p class="panel-sub">Saved locally every time the cost value changes (≈ every 60 s)</p>
+        </div>
+        <div class="cost-history-actions">
+          <a href="/api/cost-history/export" class="btn btn-export" id="btnExport">⬇ Export CSV</a>
+          <button class="btn btn-sm btn-muted" onclick="clearCostHistory()">🗑 Clear All</button>
+        </div>
+      </div>
+
+      <div class="cost-table-wrap">
+        <table class="cost-table" id="costTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date &amp; Time</th>
+              <th>Cost (₹)</th>
+              <th>Energy (kWh)</th>
+            </tr>
+          </thead>
+          <tbody id="costTableBody">
+            <tr><td colspan="4" class="empty-msg">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cost-table-footer">
+        <span id="costRowCount" class="muted-text">-- records</span>
+        <div class="pagination-btns">
+          <button class="btn btn-sm btn-muted" id="btnPrevPage" onclick="costPageChange(-1)">‹ Prev</button>
+          <span class="page-indicator" id="pageIndicator">Page 1</span>
+          <button class="btn btn-sm btn-muted" id="btnNextPage" onclick="costPageChange(1)">Next ›</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>Smart Plug Dashboard &nbsp;•&nbsp; Adafruit IO: yuvrajsingh01 &nbsp;•&nbsp; 2025</footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
